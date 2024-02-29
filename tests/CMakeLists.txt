@@ -1,0 +1,3 @@
+add_executable(ExpressionSolverTests test_BasicOperations.cpp)
+target_link_libraries(ExpressionSolverTests ExpressionSolver)
+add_test(NAME ExpressionSolverTests COMMAND ExpressionSolverTests)
