@@ -6,11 +6,7 @@
 #include "Operation.hpp"
 
 namespace expression_solver {
-using BinaryOperationPtr = std::shared_ptr<operations::BinaryOperation>;
-using BinaryOperation = expression_solver::operations::BinaryOperation;
-using UnaryOperationPtr = std::shared_ptr<operations::UnaryOperation>;
-using UnaryOperation = expression_solver::operations::UnaryOperation;
-using OperationPtr = std::shared_ptr<operations::Operation>;
+using OperationPtr = operations::OperationPtr;
 
 struct Token {
 
@@ -38,32 +34,6 @@ struct Token {
   bool operator==(const Token &other) const { return value == other.value; }
 
   bool operator!=(const Token &other) const { return value != other.value; }
-
-  bool isBinaryOperation(const Context &context, BinaryOperationPtr &op) const {
-    auto optOp = context.getOperation(std::string(value));
-    if (optOp.has_value()) {
-      auto isBinaryOp =
-          std::dynamic_pointer_cast<BinaryOperation>(optOp.value());
-      if (isBinaryOp) {
-        op = isBinaryOp;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool isUnaryOperation(const Context &context, UnaryOperationPtr &op) const {
-    auto optOp = context.getOperation(std::string(value));
-    if (optOp.has_value()) {
-      auto isUnaryOp =
-          std::dynamic_pointer_cast<operations::UnaryOperation>(optOp.value());
-      if (isUnaryOp) {
-        op = isUnaryOp;
-        return true;
-      }
-    }
-    return false;
-  }
 
   bool isOperation(const Context &context, OperationPtr &op) const {
     auto optOp = context.getOperation(std::string(value));
@@ -169,28 +139,21 @@ ExpressionPtr build_tree(std::queue<Token> &postfixTokens,
                          const Context &context) {
   std::stack<ExpressionPtr> expressions;
   double value;
-  BinaryOperationPtr bop;
-  UnaryOperationPtr uop;
+  OperationPtr op;
   PlaceHolderPtr placeholder;
 
   while (!postfixTokens.empty()) {
     auto &token = postfixTokens.front();
     if (token.isConst(value)) {
       expressions.push(std::make_shared<ConstExpression>(value));
-    } else if (token.isBinaryOperation(context, bop)) {
-      auto right = expressions.top();
-      expressions.pop();
-      auto left = expressions.top();
-      expressions.pop();
-      expressions.push(bop->create(left, right));
-    } else if (token.isUnaryOperation(context, uop)) {
-      auto operand = expressions.top();
-      expressions.pop();
-      expressions.push(uop->create(operand));
-    } else if (token.isVariable(context, value)) {
-      expressions.push(std::make_shared<ConstExpression>(value));
-    } else if (token.isPlaceholder(context, placeholder)) {
-      expressions.push(placeholder);
+    } else if (token.isOperation(context, op)) {
+      auto newOp = op->clone();
+      int operandsCount = newOp->operandsCount();
+      for(int i = 0; i < operandsCount; i++) {
+        newOp->addOperand(expressions.top());
+        expressions.pop();
+      }
+      expressions.push(newOp);
     } else if (token.isVariable(context, value)) {
       expressions.push(std::make_shared<ConstExpression>(value));
     } else if (token.isPlaceholder(context, placeholder)) {
@@ -262,6 +225,7 @@ ExpressionPtr parse(std::vector<Token> &tokens, const Context &context) {
 
 ExpressionPtr optimize(ExpressionPtr expression, const Context &context,
                        int recursionDepth = 0) {
+  using namespace operations;
   if (recursionDepth >= 20) {
     return expression;
   }
@@ -271,25 +235,19 @@ ExpressionPtr optimize(ExpressionPtr expression, const Context &context,
     return expression;
   }
 
-  auto unaryOp = std::dynamic_pointer_cast<UnaryOperation>(expression);
-  if (unaryOp) {
-    auto operand = optimize(unaryOp->getOperand(), context, recursionDepth + 1);
-    unaryOp->setOperand(operand);
-    if (std::dynamic_pointer_cast<ConstExpression>(operand)) {
-      return std::make_shared<ConstExpression>(unaryOp->evaluate());
+  auto op = std::dynamic_pointer_cast<Operation>(expression);
+  if (op) {
+    auto operands = op->getOperands();
+    bool allConst = true;
+    for (auto &operand : operands) {
+      operand = optimize(operand, context, recursionDepth + 1);
+      if (!std::dynamic_pointer_cast<ConstExpression>(operand)) {
+        allConst = false;
+      }
     }
-    return expression;
-  }
-
-  auto binaryOp = std::dynamic_pointer_cast<BinaryOperation>(expression);
-  if (binaryOp) {
-    auto left = optimize(binaryOp->getLeft(), context, recursionDepth + 1);
-    auto right = optimize(binaryOp->getRight(), context, recursionDepth + 1);
-    binaryOp->setLeft(left);
-    binaryOp->setRight(right);
-    if (std::dynamic_pointer_cast<ConstExpression>(left) &&
-        std::dynamic_pointer_cast<ConstExpression>(right)) {
-      return std::make_shared<ConstExpression>(binaryOp->evaluate());
+    op->setOperands(operands);
+    if (allConst) {
+      return std::make_shared<ConstExpression>(op->evaluate());
     }
     return expression;
   }
